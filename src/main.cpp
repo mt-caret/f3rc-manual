@@ -35,17 +35,6 @@ Ticker backlight_toggler;
 void backlight_toggle(void) {
   backlight.write(!backlight.read());
 }
-volatile bool kill_flag = false;
-void check_kill_switch(void) {
-  if (ShieldInput::Select) {
-    kill_flag = true;
-    backlight_toggler.attach(&backlight_toggle, 1.0f);
-  }
-}
-Ticker kill_switch_watcher;
-void initialize_kill_switch(void) {
-  kill_switch_watcher.attach(&check_kill_switch, 0.1f);
-}
 
 DigitalOut buzzer(PD_2);
 DigitalIn button(USER_BUTTON);
@@ -106,7 +95,6 @@ void initialize_compass(void) {
   compass_watcher.attach(parse_compass_data, 0.015);
 }*/
 /// 手動機・自動機共有部分
-
 Serial ps3(PA_11, PA_12); // tx, rx
 const uint16_t buffer_size = 130;
 uint8_t buffer[buffer_size];
@@ -225,6 +213,18 @@ void parse_input_data(bool debug) {
   Input::LeftX    = data[9];
   Input::RightY   = data[10];
   Input::RightX   = data[11];
+}
+
+volatile bool kill_flag = false;
+void check_kill_switch(void) {
+  if (Input::Select && Input::Start && !kill_flag) {
+    kill_flag = true;
+    backlight_toggler.attach(&backlight_toggle, 1.0f);
+  }
+}
+Ticker kill_switch_watcher;
+void initialize_kill_switch(void) {
+  kill_switch_watcher.attach(&check_kill_switch, 0.1f);
 }
 
 PwmOut servo[3] = { PwmOut(PB_0), PwmOut(PA_1), PwmOut(PB_7) };
@@ -468,8 +468,7 @@ void initialize_io(void) {
   ps3.attach(&Rx_interrupt, Serial::RxIrq);
   initialize_buzzer();
   initialize_shield();
-//  initialize_kill_switch(); //turning this on instantly turns kill_flag on
-//  TODO: investigate
+  initialize_kill_switch();
   initialize_servo();
 //  initialize_motor();
 //  initialize_i2c();
@@ -486,11 +485,16 @@ void initialize_io(void) {
 
   repeat_buzz(0.05, 2);
 }
+void kill(void) {
+  lcd.cls();
+  lcd.locate(0, 0);
+  lcd.printf("killed.");
+}
 int main() {
   initialize_io();
-  //for (int i = 0; i < 100; i++) {
-  test_servo();
+  //test_servo();
   while(true) {
+    if (kill_flag) break;
     //wait(0.2);
 //    parse_compass_data();
     //lcd.cls();
@@ -504,5 +508,7 @@ int main() {
     parse_input_data(false); //test_servo();
     drive(1.0, false);
   }
+  kill();
+  while(true);
 }
 
