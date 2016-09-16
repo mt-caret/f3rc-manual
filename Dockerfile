@@ -12,5 +12,7 @@ RUN apt-get install -y gcc-arm-embedded
 RUN pip install mbed-cli
 WORKDIR /tmp/build
 RUN mbed new . --mbedlib
+RUN mbed add https://developer.mbed.org/users/simon/code/TextLCD/
+RUN mbed add https://developer.mbed.org/users/syundo0730/code/Adafruit-PWM-Servo-Driver/
 COPY src/* /tmp/build/
 CMD bash
