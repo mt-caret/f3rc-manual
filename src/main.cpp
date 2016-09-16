@@ -53,7 +53,7 @@ void repeat_buzz(float time, int n) {
   }
 }
 
-/*I2C i2c(PB_9, PB_8);
+I2C i2c(PB_9, PB_8);
 void initialize_i2c(void) {
   i2c.frequency(100000); //100kHz
 }
@@ -93,8 +93,9 @@ void initialize_compass(void) {
   compass_write(0x02, 0b00000000);
   //75Hz -> 13.3ms 15ms秒毎にサンプルするのが妥当?
   compass_watcher.attach(parse_compass_data, 0.015);
-}*/
+}
 /// 手動機・自動機共有部分
+
 Serial ps3(PA_11, PA_12); // tx, rx
 const uint16_t buffer_size = 130;
 uint8_t buffer[buffer_size];
@@ -434,6 +435,11 @@ void drive(float power, bool debug) {
   }
 }
 
+void kill(void) {
+  lcd.cls();
+  lcd.locate(0, 0);
+  lcd.printf("killed.");
+}
 void test_servo(void) {
   /*if (!button) {
     for (int i = 0; i < 3; i++) {
@@ -447,7 +453,7 @@ void test_servo(void) {
     wait(1.0);
   }*/
   float pw = 1.0f;
-  while(true) {
+  while (true) {
     wait(0.1);
     if (ShieldInput::Right) pw = min(1.0, pw+0.1);
     else if (ShieldInput::Left) pw = max(0.0, pw-0.1);
@@ -457,10 +463,72 @@ void test_servo(void) {
     set_servo(servo[0], pw);
   }
 }
-
 void test_compass(void) {
+  while (true) {
+    wait(0.2);
+    parse_compass_data();
+    lcd.cls();
+    lcd.locate(0, 0);
+    lcd.printf("x: %d y: %d", x, y);
+    lcd.printf("r: %f", radian);
+    lcd.locate(0, 1);
+    lcd.printf("z: %d", z);
+    lcd.printf("d: %f", degree);
+    pc.printf("%d, %d\n\r", x, y);
+  }
 }
-
+void test_drive(void) {
+  while (true) {
+    if (kill_flag) break;
+    parse_input_data(false);
+    drive(1.0, false);
+  }
+}
+void mode_select(void) {
+  enum Mode { TEST_SERVO = 0, TEST_COMPASS, TEST_DRIVE };
+  const int messages_size = 3;
+  const char *messages[messages_size] = {
+    "TEST_SERVO", "TEST_COMPASS", "TEST_DRIVE"
+  };
+  Mode mode = TEST_SERVO;
+  do {
+    lcd.cls();
+    lcd.locate(0, 0);
+    lcd.printf("%d: ", (int)mode);
+    lcd.printf(messages[(int)mode]);
+    wait(0.1);
+    parse_input_data(false);
+    if (ShieldInput::Up || Input::Up) {
+      while (Input::Up) parse_input_data(false);
+      mode = (Mode) std::min((int) mode + 1, messages_size - 1);
+    } else if (ShieldInput::Down || Input::Down) {
+      while (Input::Down) parse_input_data(false);
+      mode = (Mode) std::max((int) mode - 1, 0);
+    }
+  } while (!ShieldInput::Select && !Input::Circle);
+  while (Input::Circle) parse_input_data(false);
+  repeat_buzz(0.05, (int) mode + 1);
+  wait(1.0);
+  switch (mode) {
+    case TEST_SERVO:
+      test_servo();
+      break;
+    case TEST_COMPASS:
+      test_compass();
+      break;
+    case TEST_DRIVE:
+      test_drive();
+      break;
+    default:
+      //This should not happen!
+      lcd.cls();
+      lcd.locate(0, 0);
+      lcd.printf("!!!NO MODE!!!");
+      wait(10.0);
+      kill();
+      break;
+  }
+}
 void initialize_io(void) {
   pc.baud(19200);
   ps3.baud(2400);
@@ -471,9 +539,9 @@ void initialize_io(void) {
   initialize_kill_switch();
   initialize_servo();
 //  initialize_motor();
-//  initialize_i2c();
+  initialize_i2c();
   initialize_pwm();
-//  initialize_compass();
+  initialize_compass();
 
   lcd.cls();
   wait(0.5);
@@ -485,30 +553,9 @@ void initialize_io(void) {
 
   repeat_buzz(0.05, 2);
 }
-void kill(void) {
-  lcd.cls();
-  lcd.locate(0, 0);
-  lcd.printf("killed.");
-}
 int main() {
   initialize_io();
-  //test_servo();
-  while(true) {
-    if (kill_flag) break;
-    //wait(0.2);
-//    parse_compass_data();
-    //lcd.cls();
-    //lcd.locate(0, 0);
-    //lcd.printf("x: %d y: %d", x, y);
-    //lcd.printf("r: %f", radian);
-    //lcd.locate(0, 1);
-    //lcd.printf("z: %d", z);
-    //lcd.printf("d: %f", degree);
-    //pc.printf("%d, %d\n\r", x, y);
-    parse_input_data(false); //test_servo();
-    drive(1.0, false);
-  }
-  kill();
+  mode_select();
   while(true);
 }
 
