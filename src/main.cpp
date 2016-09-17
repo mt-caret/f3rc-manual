@@ -91,8 +91,6 @@ void initialize_compass(void) {
   //                    +-------- 0  High Speed I2C -> Disabled
   //                    |     ++- 00 Operating Mode -> Continuous-Measurement
   compass_write(0x02, 0b00000000);
-  //75Hz -> 13.3ms 15ms秒毎にサンプルするのが妥当?
-  compass_watcher.attach(parse_compass_data, 0.015);
 }
 /// 手動機・自動機共有部分
 
@@ -219,6 +217,7 @@ void parse_input_data(bool debug) {
 volatile bool kill_flag = false;
 void check_kill_switch(void) {
   if (Input::Select && Input::Start && !kill_flag) {
+  //if (false && !kill_flag) {
     kill_flag = true;
     backlight_toggler.attach(&backlight_toggle, 1.0f);
   }
@@ -466,6 +465,7 @@ void test_servo(void) {
 void test_compass(void) {
   while (true) {
     wait(0.2);
+    //75Hz -> 13.3ms 15ms秒毎にサンプルするのが妥当?
     parse_compass_data();
     lcd.cls();
     lcd.locate(0, 0);
@@ -478,11 +478,11 @@ void test_compass(void) {
   }
 }
 void test_drive(void) {
-  while (true) {
-    if (kill_flag) break;
-    parse_input_data(false);
+  while (!kill_flag) {
+    parse_input_data(true);
     drive(1.0, false);
   }
+  //emergency stop procedure here
 }
 void mode_select(void) {
   enum Mode { TEST_SERVO = 0, TEST_COMPASS, TEST_DRIVE };
@@ -497,16 +497,24 @@ void mode_select(void) {
     lcd.printf("%d: ", (int)mode);
     lcd.printf(messages[(int)mode]);
     wait(0.1);
-    parse_input_data(false);
-    if (ShieldInput::Up || Input::Up) {
-      while (Input::Up) parse_input_data(false);
+    //TODO: parse_input_data currently blocks; changing SBDBT to continuous
+    //will probably fix it
+    //parse_input_data(false);
+    //if (ShieldInput::Up || Input::Up) {
+    if (ShieldInput::Up) {
+      //while (Input::Up) parse_input_data(false);
       mode = (Mode) std::min((int) mode + 1, messages_size - 1);
-    } else if (ShieldInput::Down || Input::Down) {
-      while (Input::Down) parse_input_data(false);
+    //} else if (ShieldInput::Down || Input::Down) {
+    } else if (ShieldInput::Down) {
+      //while (Input::Down) parse_input_data(false);
       mode = (Mode) std::max((int) mode - 1, 0);
     }
-  } while (!ShieldInput::Select && !Input::Circle);
-  while (Input::Circle) parse_input_data(false);
+  //} while (!ShieldInput::Select && !Input::Circle);
+  } while (!ShieldInput::Select);
+  //while (Input::Circle) parse_input_data(false);
+  pc.printf("Mode %d selected: ", (int)mode);
+  pc.printf(messages[(int)mode]);
+  pc.printf("\n\r");
   repeat_buzz(0.05, (int) mode + 1);
   wait(1.0);
   switch (mode) {
