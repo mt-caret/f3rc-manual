@@ -249,7 +249,7 @@ void initialize_servo(void) {
   apply_servo();
 }
 
-Adafruit_PWMServoDriver pwm(PB_9, PB_8, 0x40); //sda, scl, addr
+Adafruit_PWMServoDriver pwm(PB_9, PB_8); //sda, scl, addr
 void initialize_pwm(void) {
   pwm.begin();
   pwm.setPWMFreq(50.0f); //20ms -> 50Hz -> これの周期を調べる
@@ -271,7 +271,18 @@ void set_pwm_with_float(uint8_t n, float p) {
   set_pwm(n, std::floor(4095*p+0.5f));
   //std::round only available from c++11 :(((
 }
-uint8_t motor[4][2] = { { 0, 1 }, { 2, 3 }, { 4, 5 }, { 6, 7 } };
+#define MOTOR motor[0]
+uint8_t motor[4][2] = {
+  { 1, 0 }, //front left
+  { 4, 5 }, //back right
+  { 3, 2 }, //front right
+  { 7, 6 }  //back left
+};
+
+//motor[0] -> front left
+//motor[1] -> back left
+//motor[2] -> front right
+//motor[3] -> back right
 
 /*PwmOut motor[4][2] = {
   { PwmOut(PC_8), PwmOut(PC_6) },
@@ -302,6 +313,11 @@ void set_motor(uint8_t in[2], float power) {
 void release_motor(uint8_t in[2]) {
   set_motor(in, 0.0);
 }
+void kill_motor(void) {
+  for (int i = 0; i < 4; i++) {
+    release_motor(motor[i]);
+  }
+}
 //const float approach_constant = 10.0f;
 //const float approach_constant = 1.0f;
 //void approach_motor(uint8_t in[2], float target) {
@@ -326,33 +342,29 @@ void set_motor_with_direction(uint8_t in[2], Direction d, float percent) {
 //  }
 //}
 
-//motor[0] -> front left
-//motor[1] -> back left
-//motor[2] -> front right
-//motor[3] -> back right
 Direction forward[4] = {
-  Clockwise, Clockwise, CounterClockwise, CounterClockwise
-};
-Direction backward[4] = {
   CounterClockwise, CounterClockwise, Clockwise, Clockwise
 };
-Direction right[4] = {
-  Clockwise, CounterClockwise, Clockwise, CounterClockwise
+Direction backward[4] = {
+  Clockwise, Clockwise, CounterClockwise, CounterClockwise
 };
-Direction left[4] = {
+Direction right[4] = {
   CounterClockwise, Clockwise, CounterClockwise, Clockwise
 };
+Direction left[4] = {
+  Clockwise, CounterClockwise, Clockwise, CounterClockwise
+};
 Direction right_forward[4] = {
-  Clockwise, Stop, Stop, CounterClockwise
-};
-Direction right_backward[4] = {
-  Stop, CounterClockwise, Clockwise, Stop
-};
-Direction left_forward[4] = {
   Stop, Clockwise, CounterClockwise, Stop
 };
-Direction left_backward[4] = {
+Direction right_backward[4] = {
   CounterClockwise, Stop, Stop, Clockwise
+};
+Direction left_forward[4] = {
+  Clockwise, Stop, Stop, CounterClockwise
+};
+Direction left_backward[4] = {
+  Stop, CounterClockwise, Clockwise, Stop
 };
 Direction clockwise[4] = {
   Clockwise, Clockwise, Clockwise, Clockwise
@@ -376,6 +388,8 @@ void set_motor_with_cartesian(float x, float y) {
   set_motor(motor[2], -pb);
 }
 void drive(float power, bool debug) {
+  if (Input::R2) power /= 2.0f;
+  if (Input::L2) power /= 1.5f;
   if (Input::LeftX != 0x80 || Input::LeftY != 0x80) {
     float x =
       Input::LeftX < 0x80 ?
@@ -418,19 +432,20 @@ void drive(float power, bool debug) {
     for (int i = 0; i < 4; i++) {
       set_motor_with_direction(motor[i], left_forward[i], power);
     }
-  } else if (Input::R1) {
+  } else if (Input::L1) {
     for (int i = 0; i < 4; i++) {
       set_motor_with_direction(motor[i], clockwise[i], power);
     }
-  } else if (Input::L1) {
+  } else if (Input::R1) {
     for (int i = 0; i < 4; i++) {
       set_motor_with_direction(motor[i], counter_clockwise[i], power);
     }
   } else {
-    for (int i = 0; i < 4; i++) {
-      release_motor(motor[i]);
-      //set_motor_with_direction(motor[i], Stop, 0.0f);
-    }
+    kill_motor();
+//    for (int i = 0; i < 4; i++) {
+//      release_motor(motor[i]);
+//      //set_motor_with_direction(motor[i], Stop, 0.0f);
+//    }
   }
 }
 
@@ -462,7 +477,7 @@ void test_servo(void) {
     set_servo(servo[0], pw);
   }
 }
-void test_compass(void) {
+/*void test_compass(void) {
   while (true) {
     wait(0.2);
     //75Hz -> 13.3ms 15ms秒毎にサンプルするのが妥当?
@@ -476,19 +491,53 @@ void test_compass(void) {
     lcd.printf("d: %f", degree);
     pc.printf("%d, %d\n\r", x, y);
   }
+}*/
+void test_motor(void) {
+  const int messages_size = 3;
+  const char *messages[messages_size] = {
+    "Clockwise", "C-Clockwise", "Stop"
+  };
+  int motor_selected = 0;
+  Direction dir = Stop;
+  while (true) {
+    lcd.cls();
+    lcd.locate(0, 0);
+    lcd.printf("motor: %d", motor_selected);
+    lcd.locate(0, 1);
+    lcd.printf("dir: ", motor_selected);
+    lcd.printf(messages[(int)dir]);
+    wait(0.1);
+    if (ShieldInput::Up) {
+      dir = (Direction) std::min((int) dir + 1, messages_size - 1);
+    } else if (ShieldInput::Down) {
+      dir = (Direction) std::max((int) dir - 1, 0);
+    } else if (ShieldInput::Right) {
+      //kill_motor();
+      set_motor_with_direction(motor[motor_selected], Stop, 0.5);
+      motor_selected = std::min(motor_selected + 1, 3);
+    } else if (ShieldInput::Left) {
+      //kill_motor();
+      set_motor_with_direction(motor[motor_selected], Stop, 0.5);
+      motor_selected = std::max(motor_selected - 1, 0);
+    }
+    set_motor_with_direction(motor[motor_selected], dir, 0.5);
+  }
 }
 void test_drive(void) {
+  //pwm.setPWM(0, 4096, 0);
+  //while (true);
   while (!kill_flag) {
     parse_input_data(true);
     drive(1.0, false);
   }
+  kill_motor();
   //emergency stop procedure here
 }
 void mode_select(void) {
-  enum Mode { TEST_SERVO = 0, TEST_COMPASS, TEST_DRIVE };
-  const int messages_size = 3;
+  enum Mode { TEST_SERVO = 0, TEST_COMPASS, TEST_DRIVE, TEST_MOTOR };
+  const int messages_size = 4;
   const char *messages[messages_size] = {
-    "TEST_SERVO", "TEST_COMPASS", "TEST_DRIVE"
+    "TEST_SERVO", "TEST_COMPASS", "TEST_DRIVE", "TEST_MOTOR"
   };
   Mode mode = TEST_SERVO;
   do {
@@ -522,10 +571,13 @@ void mode_select(void) {
       test_servo();
       break;
     case TEST_COMPASS:
-      test_compass();
+      //test_compass();
       break;
     case TEST_DRIVE:
       test_drive();
+      break;
+    case TEST_MOTOR:
+      test_motor();
       break;
     default:
       //This should not happen!
@@ -549,7 +601,7 @@ void initialize_io(void) {
 //  initialize_motor();
   initialize_i2c();
   initialize_pwm();
-  initialize_compass();
+//  initialize_compass();
 
   lcd.cls();
   wait(0.5);
