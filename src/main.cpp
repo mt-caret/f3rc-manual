@@ -135,16 +135,20 @@ bool is_set(uint8_t position, uint8_t data) {
 uint8_t data[13];
 void parse_input_data(bool debug) {
   __disable_irq();
+  //NVIC_DisableIRQ(USART6_IRQn);
   for (int i = 0; i < 13; i++) {
     if (rx_in == rx_out) {
+      //NVIC_EnableIRQ(USART6_IRQn);
       __enable_irq();
       while (rx_in == rx_out);
       __disable_irq();
+      //NVIC_DisableIRQ(USART6_IRQn);
     }
     data[i] = buffer[rx_out];
     rx_out = (rx_out + 1) % buffer_size;
   }
   __enable_irq();
+  //NVIC_EnableIRQ(USART6_IRQn);
 
   bool start_bytes = data[0] == 0x0D && data[1] == 0x00 && data[2] == 0x02 &&
       data[3] == 0x50 && data[4] == 0x03 && data[5] == 0x00;
@@ -228,18 +232,19 @@ void initialize_kill_switch(void) {
 }
 
 PwmOut servo[3] = { PwmOut(PB_0), PwmOut(PA_1), PwmOut(PB_7) };
-bool is_open[3] = { true, true, true };
+bool servo_state[3] = { true, true, true }; //open = true, closed = false
 float open_close[3][2] = {
-  { 1.0f, 0.5f }, // top
-  { 1.0f, 0.5f }, // middle
-  { 0.5f, 1.0f }  // bottom
+  //open, close
+  { 1.0f, 0.85f }, // top
+  { 1.0f, 0.85f }, // middle
+  { 0.45f, 0.6f }  // bottom
 };
 void set_servo(PwmOut s, float percent) {
   s.pulsewidth_us(percent * (1800-500) + 500);
 }
 void apply_servo(void) {
   for (int i = 0; i < 3; i++) {
-    set_servo(servo[i], open_close[i][!is_open[i]]);
+    set_servo(servo[i], open_close[i][servo_state[i] ? 0 : 1]);
   }
 }
 void initialize_servo(void) {
@@ -271,12 +276,12 @@ void set_pwm_with_float(uint8_t n, float p) {
   set_pwm(n, std::floor(4095*p+0.5f));
   //std::round only available from c++11 :(((
 }
-#define MOTOR motor[0]
 uint8_t motor[4][2] = {
   { 1, 0 }, //front left
   { 4, 5 }, //back right
   { 3, 2 }, //front right
-  { 7, 6 }  //back left
+  { 7, 6 } //back left
+//  { 8, 9 }, //arm
 };
 
 //motor[0] -> front left
@@ -316,6 +321,23 @@ void release_motor(uint8_t in[2]) {
 void kill_motor(void) {
   for (int i = 0; i < 4; i++) {
     release_motor(motor[i]);
+  }
+}
+
+PwmOut arm_motor[2] = { PwmOut(PC_6), PwmOut(PC_8) };
+void initialize_arm_motor(void) {
+  for (int i = 0; i < 2; i++) {
+    arm_motor[i].period_ms(20);
+    arm_motor[i].write(0.0f);
+  }
+}
+void set_arm(float power) {
+  arm_motor[0].write((power > 0.0) ? power : 0.0f);
+  arm_motor[1].write((power > 0.0) ? 0.0f : -power);
+}
+void release_arm(void) {
+  for (int i = 0; i < 2; i++) {
+    arm_motor[i].write(0.0f);
   }
 }
 //const float approach_constant = 10.0f;
@@ -390,6 +412,16 @@ void set_motor_with_cartesian(float x, float y) {
 void drive(float power, bool debug) {
   if (Input::R2) power /= 2.0f;
   if (Input::L2) power /= 1.5f;
+  if (Input::RightY != 0x80) {
+    float y =
+      Input::RightY < 0x80 ?
+      (-((float)(0x80-Input::RightY))/0x80) :
+      (((float)(Input::RightY-0x80))/0x7F);
+    set_arm(y);
+  } else {
+    release_arm();
+  }
+
   if (Input::LeftX != 0x80 || Input::LeftY != 0x80) {
     float x =
       Input::LeftX < 0x80 ?
@@ -455,17 +487,6 @@ void kill(void) {
   lcd.printf("killed.");
 }
 void test_servo(void) {
-  /*if (!button) {
-    for (int i = 0; i < 3; i++) {
-      set_servo(servo[i], 1.0f);
-    }
-    wait(1.0);
-  } else {
-    for (int i = 0; i < 3; i++) {
-      set_servo(servo[i], 0.0f);
-    }
-    wait(1.0);
-  }*/
   float pw = 1.0f;
   while (true) {
     wait(0.1);
@@ -475,6 +496,43 @@ void test_servo(void) {
     lcd.locate(0, 0);
     lcd.printf("pw: %f", pw);
     set_servo(servo[0], pw);
+  }
+}
+void test_arm(void) {
+  enum Arm { Top = 0, Middle, Bottom };
+  const int messages_size = 3;
+  const char *messages[messages_size] = {
+    "Top", "Middle", "Bottom"
+  };
+  Arm arm = Top;
+  while (true) {
+    lcd.cls();
+    lcd.locate(0, 0);
+    lcd.printf(messages[(int)arm]);
+    lcd.locate(0, 1);
+    lcd.printf("state: ");
+    lcd.printf(servo_state[(int)arm] ? "open" : "closed");
+    wait(0.1);
+    if (ShieldInput::Up) {
+      arm = (Arm) std::max((int) arm - 1, 0);
+    } else if (ShieldInput::Down) {
+      arm = (Arm) std::min((int) arm + 1, messages_size - 1);
+    } else if (ShieldInput::Select) {
+      servo_state[(int) arm] =  !servo_state[(int) arm];
+    }
+    apply_servo();
+  }
+}
+void test_arm_rl(void) {
+  while (true) {
+    wait(0.1);
+    if (ShieldInput::Up) {
+      set_arm(1.0);
+    } else if (ShieldInput::Down) {
+      set_arm(-1.0);
+    }
+    wait(0.1);
+    release_arm();
   }
 }
 /*void test_compass(void) {
@@ -523,21 +581,34 @@ void test_motor(void) {
     set_motor_with_direction(motor[motor_selected], dir, 0.5);
   }
 }
+void check_arm_button(void) {
+  servo_state[0] ^= (Input::Up && Input::Select);
+  servo_state[1] ^= (Input::Right && Input::Select);
+  servo_state[2] ^= (Input::Down && Input::Select);
+  apply_servo();
+}
+Ticker arm_button_checker;
 void test_drive(void) {
-  //pwm.setPWM(0, 4096, 0);
-  //while (true);
+//  arm_button_checker.attach(&check_arm_button, 0.1f);
   while (!kill_flag) {
     parse_input_data(true);
     drive(1.0, false);
+//    wait(1.0);
+//    servo_state[0] ^= true;
+//    servo_state[1] ^= true;
+//    servo_state[2] ^= true;
   }
   kill_motor();
   //emergency stop procedure here
 }
 void mode_select(void) {
-  enum Mode { TEST_SERVO = 0, TEST_COMPASS, TEST_DRIVE, TEST_MOTOR };
-  const int messages_size = 4;
+  enum Mode {
+    TEST_SERVO = 0, TEST_ARM, TEST_ARM_RL, TEST_COMPASS, TEST_DRIVE, TEST_MOTOR
+  };
+  const int messages_size = 6;
   const char *messages[messages_size] = {
-    "TEST_SERVO", "TEST_COMPASS", "TEST_DRIVE", "TEST_MOTOR"
+    "TEST_SERVO", "TEST_ARM", "TEST_ARM_RL", "TEST_COMPASS", "TEST_DRIVE",
+    "TEST_MOTOR"
   };
   Mode mode = TEST_SERVO;
   do {
@@ -570,6 +641,12 @@ void mode_select(void) {
     case TEST_SERVO:
       test_servo();
       break;
+    case TEST_ARM:
+      test_arm();
+      break;
+    case TEST_ARM_RL:
+      test_arm_rl();
+      break;
     case TEST_COMPASS:
       //test_compass();
       break;
@@ -598,10 +675,11 @@ void initialize_io(void) {
   initialize_shield();
   initialize_kill_switch();
   initialize_servo();
-//  initialize_motor();
+  initialize_arm_motor();
   initialize_i2c();
   initialize_pwm();
 //  initialize_compass();
+  initialize_motor();
 
   lcd.cls();
   wait(0.5);
