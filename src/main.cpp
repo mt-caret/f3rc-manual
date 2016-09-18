@@ -113,18 +113,18 @@ void Rx_interrupt(void) {
 }
 
 class Input { public:
-    static bool Up, Down, Right, Left, Triangle, Cross, Circle, Square,
+    volatile static bool Up, Down, Right, Left, Triangle, Cross, Circle, Square,
       Start, Select, L1, L2, R1, R2;
-    static uint8_t LeftX, LeftY, RightX, RightY;
+    volatile static uint8_t LeftX, LeftY, RightX, RightY;
 };
-bool Input::Up = false, Input::Down = false,
+volatile bool Input::Up = false, Input::Down = false,
   Input::Right = false, Input::Left = false,
   Input::Triangle = false, Input::Cross = false,
   Input::Circle = false, Input::Square = false,
   Input::L1 = false, Input::L2 = false, Input::R1 = false, Input::R2 = false,
   Input::Start = false, Input::Select = false;
 
-uint8_t Input::LeftX  = 0, Input::LeftY  = 0,
+volatile uint8_t Input::LeftX  = 0, Input::LeftY  = 0,
   Input::RightX = 0, Input::RightY = 0;
 
 bool is_set(uint8_t position, uint8_t data) {
@@ -140,6 +140,7 @@ void parse_input_data(bool debug) {
     if (rx_in == rx_out) {
       //NVIC_EnableIRQ(USART6_IRQn);
       __enable_irq();
+      pc.printf("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\r");
       while (rx_in == rx_out);
       __disable_irq();
       //NVIC_DisableIRQ(USART6_IRQn);
@@ -220,7 +221,7 @@ void parse_input_data(bool debug) {
 
 volatile bool kill_flag = false;
 void check_kill_switch(void) {
-  if (Input::Select && Input::Start && !kill_flag) {
+  if (ShieldInput::Select && !kill_flag) {
   //if (false && !kill_flag) {
     kill_flag = true;
     backlight_toggler.attach(&backlight_toggle, 1.0f);
@@ -232,8 +233,8 @@ void initialize_kill_switch(void) {
 }
 
 PwmOut servo[3] = { PwmOut(PB_0), PwmOut(PA_1), PwmOut(PB_7) };
-bool servo_state[3] = { true, true, true }; //open = true, closed = false
-float open_close[3][2] = {
+volatile bool servo_state[3] = { true, true, true }; //open = true, closed = false
+const float open_close[3][2] = {
   //open, close
   { 1.0f, 0.85f }, // top
   { 1.0f, 0.85f }, // middle
@@ -242,10 +243,10 @@ float open_close[3][2] = {
 void set_servo(PwmOut s, float percent) {
   s.pulsewidth_us(percent * (1800-500) + 500);
 }
-void apply_servo(void) {
-  for (int i = 0; i < 3; i++) {
-    set_servo(servo[i], open_close[i][servo_state[i] ? 0 : 1]);
-  }
+void apply_servo() {
+  set_servo(servo[0], open_close[0][servo_state[0] ? 0 : 1]);
+  set_servo(servo[1], open_close[1][servo_state[1] ? 0 : 1]);
+  set_servo(servo[2], open_close[2][servo_state[2] ? 0 : 1]);
 }
 void initialize_servo(void) {
   for (int i = 0; i < 3; i++) {
@@ -410,8 +411,8 @@ void set_motor_with_cartesian(float x, float y) {
   set_motor(motor[2], -pb);
 }
 void drive(float power, bool debug) {
-  if (Input::R2) power /= 2.0f;
-  if (Input::L2) power /= 1.5f;
+  if (Input::R2) power /= 2.0f; //二分の一
+  if (Input::L2) power /= 1.5f; //三分の二
   if (Input::RightY != 0x80) {
     float y =
       Input::RightY < 0x80 ?
@@ -582,17 +583,18 @@ void test_motor(void) {
   }
 }
 void check_arm_button(void) {
-  servo_state[0] ^= (Input::Up && Input::Select);
-  servo_state[1] ^= (Input::Right && Input::Select);
-  servo_state[2] ^= (Input::Down && Input::Select);
-  apply_servo();
+  servo_state[0] ^= (Input::Triangle && Input::Select);
+  servo_state[1] ^= (Input::Circle && Input::Select);
+  servo_state[2] ^= (Input::Cross && Input::Select);
 }
 Ticker arm_button_checker;
 void test_drive(void) {
-//  arm_button_checker.attach(&check_arm_button, 0.1f);
+  arm_button_checker.attach(&check_arm_button, 0.5f);
+  kill_switch_watcher.attach(&check_kill_switch, 0.1f);
   while (!kill_flag) {
     parse_input_data(true);
     drive(1.0, false);
+    apply_servo();
 //    wait(1.0);
 //    servo_state[0] ^= true;
 //    servo_state[1] ^= true;
@@ -673,7 +675,7 @@ void initialize_io(void) {
   ps3.attach(&Rx_interrupt, Serial::RxIrq);
   initialize_buzzer();
   initialize_shield();
-  initialize_kill_switch();
+//  initialize_kill_switch();
   initialize_servo();
   initialize_arm_motor();
   initialize_i2c();
